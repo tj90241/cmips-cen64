@@ -1,3 +1,5 @@
+#include "bus/controller.h"
+#include "vr4300/cpu.h"
 #include "mips.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -102,8 +104,36 @@ static void printstate(Mips * emu,uint64_t n) {
     
 }
 
+void * runCen64(void * p) {
+  struct bus_controller *bus = (struct bus_controller *) p;
+  struct vr4300 vr4300;
+
+  vr4300_init(&vr4300, bus);
+  vr4300.pipeline.icrf_latch.pc = 0xFFFFFFFFA0000000ULL;
+
+  while (1) {
+        int i;
+
+        if(pthread_mutex_lock(&emu_mutex)) {
+            puts("mutex failed lock, exiting");
+            exit(1);
+        }
+
+        for (i = 0; i < 10000; i++)
+            vr4300_cycle(&vr4300);
+
+        if(pthread_mutex_unlock(&emu_mutex)) {
+            puts("mutex failed unlock, exiting");
+            exit(1);
+        }
+  }
+
+  return NULL;
+}
+
 void * runEmulator(void * p) {
     Mips * emu = (Mips *)p;
+    emu->pc = 0;
 
     while(emu->shutdown != 1) {
         int i;
@@ -114,6 +144,7 @@ void * runEmulator(void * p) {
         }
 
         for(i = 0; i < 1000 ; i++) {
+            fprintf(stderr, "emu->pc = 0x%.8X ... 0x%.8X\n", emu->pc, emu->mem[emu->pc/4]);
             step_mips(emu);
         }
         
@@ -132,7 +163,9 @@ void * runEmulator(void * p) {
 
 
 int main(int argc,char * argv[]) {
-        
+    struct bus_controller bus;
+    Mips * emu;
+
     pthread_t emu_thread;
     
     if(pthread_mutex_init(&emu_mutex,NULL)) {
@@ -140,12 +173,13 @@ int main(int argc,char * argv[]) {
         return 1;
     }
     
-    if (argc < 2) {
-        printf("Usage: %s image.srec\n",argv[0]);
+    if (argc < 3 || (strcmp(argv[2], "cmips") && strcmp(argv[2], "cen64"))) {
+        printf("Usage: %s image.srec <emutype>\n",argv[0]);
+        printf("<emutype> can either be cmips or cen64\n");
         return 1;
     }
-    
-    Mips * emu = new_mips(64 * 1024 * 1024);
+ 
+    emu = new_mips(64 * 1024 * 1024);
     
     if (!emu) {
         puts("allocating emu failed.");
@@ -156,16 +190,35 @@ int main(int argc,char * argv[]) {
         puts("failed loading srec");
         return 1;
     }
+
+  if (!strcmp(argv[2], "cen64")) {   
+    uint8_t *mem = malloc(64 * 1024 * 1024);
+
+    if (mem == NULL) {
+      puts("allocated mem failed.");
+      return 1;
+    }
+
+    bus_init(&bus, mem, 64 * 1024 * 1024, emu);
+    memcpy(mem, emu->mem, emu->pmemsz);
+  }
     
 	if(ttyraw()) {
 		puts("failed to configure raw mode");
 		return 1;
 	}
-    
+
+  if (!strcmp(argv[2], "cmips")) {
     if(pthread_create(&emu_thread,NULL,runEmulator,emu)) {
         puts("creating emulator thread failed!");
         return 1;
     }
+  } else {
+    if (pthread_create(&emu_thread,NULL,runCen64,&bus)) {
+        puts("creating emulator thread failed!");
+        return 1;
+    }
+  }
 	
     while(1) {
         int c = getchar();

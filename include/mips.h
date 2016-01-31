@@ -1,3 +1,6 @@
+#ifndef MIPS_H
+#define MIPS_H
+
 #include <stdint.h>
 #include <stdio.h>
 
@@ -131,4 +134,6 @@ void uart_writeb(Mips * emu,uint32_t offset,uint8_t v);
 void uart_RecieveChar(Mips * emu, uint8_t c);
 
 extern char * regn2o32[];
+
+#endif
 
