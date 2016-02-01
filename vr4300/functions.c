@@ -1001,6 +1001,36 @@ int VR4300_LD_SD(struct vr4300 *vr4300,
 }
 
 //
+// LL
+// SC
+//
+int VR4300_LL_SC(struct vr4300 *vr4300,
+  uint32_t iw, uint64_t rs, uint64_t rt) {
+  struct vr4300_exdc_latch *exdc_latch = &vr4300->pipeline.exdc_latch;
+  uint64_t sel_mask = (int64_t) (int32_t) (iw << 2) >> 32;
+
+  uint64_t address = rs + (int16_t) iw;
+  uint64_t dqm = sel_mask;
+  unsigned rshiftamt = (address & 0x3) << 3;
+
+  exdc_latch->request.vaddr = address;
+  exdc_latch->request.data = dqm | (sel_mask & (rt >> rshiftamt));
+  exdc_latch->request.wdqm = (uint32_t) sel_mask;
+  exdc_latch->request.postshift = 0;
+  exdc_latch->request.access_type = VR4300_ACCESS_WORD;
+  exdc_latch->request.type = 1 - sel_mask;
+  exdc_latch->request.size = 4;
+
+  // XXX: DC stage must update LLAddr register.
+  // Or, we can do address translation here and
+  // defer panics to the DC stage...
+
+  exdc_latch->dest = ~sel_mask & GET_RT(iw);
+  exdc_latch->result = 0;
+  return 0;
+}
+
+//
 // LB
 // LBU
 // LH
@@ -1031,6 +1061,11 @@ cen64_hot int VR4300_LOAD_STORE(struct vr4300 *vr4300,
   exdc_latch->request.access_type = VR4300_ACCESS_WORD;
   exdc_latch->request.type = 1 - sel_mask;
   exdc_latch->request.size = request_size + 1;
+
+  FILE *fout = fopen("out.log", "a");
+  fprintf(fout, "LOAD_STORE: address=0x%.8X, dqm=0x%.8X, wdqm=0x%.8X, data=0x%.8X\n",
+    address, dqm, exdc_latch->request.wdqm, exdc_latch->request.data);
+  fclose(fout);
 
   exdc_latch->dest = ~sel_mask & GET_RT(iw);
   exdc_latch->result = 0;
@@ -1392,6 +1427,14 @@ int VR4300_SWL_SWR(struct vr4300 *vr4300,
   exdc_latch->request.type = VR4300_BUS_REQUEST_WRITE;
   exdc_latch->request.size = 4;
   return 0;
+}
+
+int VR4300_TNE(struct vr4300 *vr4300,
+  uint32_t iw, uint64_t rs, uint64_t rt) {
+  if (rs != rt) {
+    VR4300_TRAP(vr4300);
+    return 1;
+  }
 }
 
 // Function lookup table.

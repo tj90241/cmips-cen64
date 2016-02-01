@@ -10,6 +10,7 @@
 
 #include "common.h"
 #include "bus/controller.h"
+#include "mips.h"
 #include "vr4300/cp0.h"
 #include "vr4300/cpu.h"
 #include "vr4300/dcache.h"
@@ -247,7 +248,16 @@ void VR4300_DCM(struct vr4300 *vr4300) {
       uint32_t hiword, loword;
       int64_t sdata;
 
-      paddr &= ~mask;
+      if (paddr >= UARTBASE && paddr <= (UARTBASE + UARTSIZE)) {
+        uint32_t uartword;
+        bus_read_word(vr4300, paddr, &uartword);
+        dcwb_latch->result = uartword;
+        vr4300_common_interlocks(vr4300, MEMORY_WORD_DELAY, 2);
+        return;
+      }
+      else {
+        paddr &= ~mask;
+      }
       bus_read_word(vr4300, paddr, &hiword);
 
       if (request->access_type != VR4300_ACCESS_DWORD)
@@ -269,14 +279,25 @@ void VR4300_DCM(struct vr4300 *vr4300) {
       uint64_t data = request->data;
       uint64_t dqm = request->wdqm;
 
-      paddr &= ~mask;
+      if (paddr >= UARTBASE && paddr <= (UARTBASE + UARTSIZE)) {
+        bus_write_word(vr4300, paddr, data >> 24, ~0);
+        vr4300_common_interlocks(vr4300, MEMORY_WORD_DELAY, 2);
+        return;
+      } else {
+        paddr &= ~mask;
+      }
 
       if (request->access_type == VR4300_ACCESS_DWORD) {
         bus_write_word(vr4300, paddr, data >> 32, dqm >> 32);
         paddr += 4;
       }
  
+      FILE *fout = fopen("out.log", "a");
+      fprintf(fout, "WRITE_SYSAD: paddr=0x%.8X, dqm=0x%.8X, data=0x%.8X\n",
+        paddr, dqm, data);
+      fclose(fout);
       bus_write_word(vr4300, paddr, data, dqm);
+      // fprintf(stderr, "WRITE DWORD: 0x%.8X\n", data);
     }
 
     vr4300_common_interlocks(vr4300, MEMORY_WORD_DELAY, 2);
@@ -434,8 +455,8 @@ void VR4300_RST(struct vr4300 *vr4300) {
     vr4300->regs[VR4300_CP0_REGISTER_STATUS] &= ~0x08300000ULL;
     vr4300->regs[VR4300_CP0_REGISTER_CONFIG] &= ~0xFFFF7FF0ULL;
 
-    vr4300->regs[VR4300_CP0_REGISTER_STATUS] |= 0x00400004ULL;
-    vr4300->regs[VR4300_CP0_REGISTER_CONFIG] |= 0x7006E460ULL;
+    //vr4300->regs[VR4300_CP0_REGISTER_STATUS] |= 0x00400004ULL;
+    //vr4300->regs[VR4300_CP0_REGISTER_CONFIG] |= 0x7006E460ULL;
 
     vr4300->regs[VR4300_CP0_REGISTER_RANDOM] = 31;
   }
@@ -452,7 +473,25 @@ void VR4300_RST(struct vr4300 *vr4300) {
     vr4300->regs[VR4300_CP0_REGISTER_EPC],
     -0x200ULL);
 
-  vr4300->pipeline.icrf_latch.pc = 0xFFFFFFFFA0000000ULL;
+  // Linux...
+  vr4300->regs[VR4300_CP0_REGISTER_STATUS] = 4;
+  vr4300->regs[VR4300_CP0_REGISTER_STATUS] &= ~(1 << 22); // Clear BEV
+  vr4300->pipeline.icrf_latch.pc = 0xFFFFFFFF801E4B10ULL;
+  vr4300->regs[VR4300_CP0_REGISTER_PRID] = 0x00018000;
+  vr4300->regs[VR4300_CP0_REGISTER_CONFIG] = 0x80008082;
+  vr4300->regs[VR4300_CP0_REGISTER_WATCHLO] = 0;
+}
+
+// TRAP: Trap exception.
+cen64_cold void VR4300_TRAP(struct vr4300 *vr4300) {
+  struct vr4300_latch *common = &vr4300->pipeline.exdc_latch.common;
+  uint32_t cause, status;
+  uint64_t epc;
+
+  vr4300_ex_fault(vr4300, VR4300_FAULT_CPU);
+  vr4300_exception_prolog(vr4300, common, &cause, &status, &epc);
+  vr4300_exception_epilogue(vr4300, (cause & ~0xFF) | 0x34,
+    status, epc, 0x180);
 }
 
 // WAT: Watch exception.

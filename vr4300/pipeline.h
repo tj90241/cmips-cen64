@@ -51,6 +51,7 @@ struct vr4300_latch {
   uint64_t pc;
   enum vr4300_fault_id fault;
   uint32_t cause_data;
+  uint32_t killed;
 };
 
 struct vr4300_icrf_latch {
@@ -84,6 +85,7 @@ struct vr4300_dcwb_latch {
 };
 
 struct vr4300_pipeline {
+  struct vr4300_latch last_pipe_result;
   struct vr4300_dcwb_latch dcwb_latch;
   struct vr4300_exdc_latch exdc_latch;
   struct vr4300_rfex_latch rfex_latch;

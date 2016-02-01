@@ -43,6 +43,7 @@ cen64_flatten static void vr4300_ic_stage(struct vr4300 *vr4300) {
 
   // Finish decoding instruction in RF.
   decode_iw = rfex_latch->iw &= rfex_latch->iw_mask;
+  rfex_latch->common.killed = ~ rfex_latch->iw_mask;
   *opcode = *vr4300_decode_instruction(decode_iw);
   rfex_latch->iw_mask = ~0U;
 
@@ -125,7 +126,7 @@ static int vr4300_ex_stage(struct vr4300 *vr4300) {
   struct vr4300_exdc_latch *exdc_latch = &vr4300->pipeline.exdc_latch;
   uint32_t cp0_status = vr4300->regs[VR4300_CP0_REGISTER_STATUS];
 
-  unsigned rs, rt, rslutidx, rtlutidx;
+  unsigned rd, rs, rt, rslutidx, rtlutidx;
   uint64_t rs_reg, rt_reg, temp;
   uint32_t flags, iw;
 
@@ -133,6 +134,7 @@ static int vr4300_ex_stage(struct vr4300 *vr4300) {
   flags = rfex_latch->opcode.flags;
   iw = rfex_latch->iw;
 
+  rd = GET_RD(iw);
   rs = GET_RS(iw);
   rt = GET_RT(iw);
 
@@ -182,8 +184,10 @@ static int vr4300_ex_stage(struct vr4300 *vr4300) {
   // Finally, execute the instruction.
 #ifdef PRINT_EXEC
   FILE *fout = fopen("out.log", "a");
-  fprintf(fout, "%.16llX: %s\n", (unsigned long long) rfex_latch->common.pc,
-    vr4300_opcode_mnemonics[rfex_latch->opcode.id]);
+  fprintf(fout, "%.16llX: %s rd[%u] rs[%u]=0x%.8X, rt[%u]=0x%.8X, imm16=0x%.8X\n",
+    (unsigned long long) rfex_latch->common.pc,
+    vr4300_opcode_mnemonics[rfex_latch->opcode.id],
+    rd, rs, rs_reg, rt, rt_reg, (int16_t) iw);
   fclose(fout);
 #endif
 
@@ -241,6 +245,7 @@ static int vr4300_dc_stage(struct vr4300 *vr4300) {
     // If we're in a mapped region, do a TLB translation.
     paddr = vaddr - segment->offset;
     cached = segment->cached;
+    cached = false;
 
     if (segment->mapped) {
       unsigned asid = vr4300->regs[VR4300_CP0_REGISTER_ENTRYHI] & 0xFF;
@@ -368,6 +373,7 @@ static int vr4300_wb_stage(struct vr4300 *vr4300) {
   const struct vr4300_dcwb_latch *dcwb_latch = &vr4300->pipeline.dcwb_latch;
 
   vr4300->regs[dcwb_latch->dest] = dcwb_latch->result;
+  vr4300->pipeline.last_pipe_result = dcwb_latch->common;
   return 0;
 }
 

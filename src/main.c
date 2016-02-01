@@ -109,7 +109,27 @@ void * runCen64(void * p) {
   struct vr4300 vr4300;
 
   vr4300_init(&vr4300, bus);
-  vr4300.pipeline.icrf_latch.pc = 0xFFFFFFFFA0000000ULL;
+  vr4300.pipeline.icrf_latch.pc = 0xFFFFFFFF801E4B10ULL;
+
+  // Prime the pipeline...
+  while (vr4300.pipeline.dcwb_latch.common.pc != 0xFFFFFFFF801E4B10ULL ||
+        (vr4300.pipeline.dcwb_latch.common.fault ||
+        vr4300.pipeline.dcwb_latch.common.killed))
+    vr4300_cycle(&vr4300);
+
+  //printf("cmips starts at 0x%.8X... PRIMED!!\n",bus->emu->pc);
+  unsigned steps_compld = 0;
+
+  uint8_t *mem_at_wb = malloc(64 * 1024 * 1024);
+  uint8_t *mem_at_commit = malloc(64 * 1024 * 1024);
+
+  if (mem_at_wb == NULL || mem_at_commit == NULL) {
+    printf("MOAR mammaries required!!\n");
+    abort();
+  }
+
+  memcpy(mem_at_wb, bus->emu->mem, 64 * 1024 * 1024);
+  memcpy(mem_at_commit, bus->emu->mem, 64 * 1024 *1024);
 
   while (1) {
         int i;
@@ -119,8 +139,81 @@ void * runCen64(void * p) {
             exit(1);
         }
 
-        for (i = 0; i < 10000; i++)
+        for (i = 0; i < 10000; i++) {
+#if 0
+          //printf(".");
+          //fflush(stdout);
+
+          // printf("step_mips, pc: 0x%.8X\n", bus->emu->pc);
+          uint32_t cmp_pc = bus->emu->pc;
+          step_mips(bus->emu);
+
+          do {
             vr4300_cycle(&vr4300);
+          } while(vr4300.pipeline.last_pipe_result.fault ||
+                  vr4300.pipeline.last_pipe_result.killed);
+
+          vr4300.pipeline.last_pipe_result.fault = ~0;
+
+          if (cmp_pc != (uint32_t) vr4300.pipeline.last_pipe_result.pc) {
+            printf("PC mismatch detected @ %u steps!\n", steps_compld);
+            printf("cmips: 0x%.8X, cen64: 0x%.8X\n",
+              bus->emu->pc, vr4300.pipeline.last_pipe_result.pc);
+            abort();
+          }
+
+          size_t ri;
+          for (ri = 1; ri < 32; ri++) {
+            if ((uint32_t) vr4300.regs[ri] != bus->emu->regs[ri]) {
+              printf("GPR[%u] mismatch detected @ 0x%.8X/%u steps!\n", ri, cmp_pc, steps_compld);
+              printf("cmips: 0x%.8X, cen64: 0x%.8X\n", bus->emu->regs[ri], vr4300.regs[ri]);
+              abort();
+            }
+          }
+
+#if 0
+          else {
+            printf("cmips: 0x%.8X, cen64: 0x%.8X\n",
+              bus->emu->pc, vr4300.pipeline.last_pipe_result.pc);
+          }
+#endif
+
+// this is too slow
+#if 1
+        if (steps_compld > 242180) {
+          //memcpy(mem_at_commit, bus->mem, 64 * 1024 * 1024);
+          if (steps_compld > 242182 && memcmp(mem_at_commit, bus->emu->mem, 64 * 1024 * 1024)) {
+            size_t k;
+            bool false_alarm;
+            for (k = 0; k < 64 * 1024 * 1024 / 4; k++) {
+              uint32_t cm, cm1, cm2;
+              memcpy(&cm, mem_at_commit + k * 4, sizeof(cm));
+              memcpy(&cm1, mem_at_wb + k * 4, sizeof(cm1));
+              memcpy(&cm2, bus->mem + k * 4, sizeof(cm2));
+              if (cm != bus->emu->mem[k] && cm1 != bus->emu->mem[k] && cm2 != bus->emu->mem[k]) {
+                printf("Memory mismatch detected @ %u steps!\n", steps_compld);
+                printf("   -> @addr=0x%.8X ... cmips=0x%.8X, cen64=0x%.8X\n",
+                  (unsigned) (k * 4), bus->emu->mem[k], cm);
+                false_alarm = false;
+                break;
+              } else {
+                false_alarm = true;
+                break;
+              }
+            }
+            if (!false_alarm)
+            abort();
+          }
+
+          memcpy(mem_at_commit, mem_at_wb, 64 * 1024 * 1024);
+          memcpy(mem_at_wb, bus->mem, 64 * 1024 * 1024);
+        }
+#endif
+        steps_compld++;
+#else
+            vr4300_cycle(&vr4300);
+#endif
+        }
 
         if(pthread_mutex_unlock(&emu_mutex)) {
             puts("mutex failed unlock, exiting");
@@ -133,7 +226,6 @@ void * runCen64(void * p) {
 
 void * runEmulator(void * p) {
     Mips * emu = (Mips *)p;
-    emu->pc = 0;
 
     while(emu->shutdown != 1) {
         int i;
@@ -143,10 +235,8 @@ void * runEmulator(void * p) {
             exit(1);
         }
 
-        for(i = 0; i < 1000 ; i++) {
-            fprintf(stderr, "emu->pc = 0x%.8X ... 0x%.8X\n", emu->pc, emu->mem[emu->pc/4]);
+        for(i = 0; i < 1000 ; i++)
             step_mips(emu);
-        }
         
         if(pthread_mutex_unlock(&emu_mutex)) {
             puts("mutex failed unlock, exiting");
@@ -203,10 +293,12 @@ int main(int argc,char * argv[]) {
     memcpy(mem, emu->mem, emu->pmemsz);
   }
     
+#if 0
 	if(ttyraw()) {
 		puts("failed to configure raw mode");
 		return 1;
 	}
+#endif
 
   if (!strcmp(argv[2], "cmips")) {
     if(pthread_create(&emu_thread,NULL,runEmulator,emu)) {

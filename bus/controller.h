@@ -16,7 +16,7 @@
 #include <setjmp.h>
 
 struct bus_controller {
-  Mips mips;
+  Mips * emu;
   size_t mem_size;
   uint8_t *mem;
 
@@ -30,7 +30,7 @@ struct bus_controller {
 };
 
 cen64_cold int bus_init(struct bus_controller *bus,
-  uint8_t *mem, size_t mem_size, void *uart);
+  uint8_t *mem, size_t mem_size, Mips * emu);
 
 // General-purpose accesssor functions.
 cen64_flatten cen64_hot int bus_read_word(void *component,

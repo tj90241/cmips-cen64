@@ -28,7 +28,7 @@ cen64_align(static const struct segment USEGs[], CACHE_LINE_SIZE) = {
 
   0x20,                  /* ux mask */
   true,                  /* mapped */
-  true,                  /* cached */
+  false,                  /* cached */
 
   /* xuseg, xsuseg, xkuseg. */ }, {
   0x0000000000000000ULL, /* start */

@@ -20,29 +20,30 @@
 static int read_uart(void *opaque, uint32_t address, uint32_t *word) {
   Mips * mips = (Mips *) opaque;
 
-  *word = uart_read(mips, address - UARTBASE);
+  *word = uart_readb(mips, address - UARTBASE);
   return 0;
 }
 
 static int write_uart(void *opaque, uint32_t address, uint32_t word, uint32_t dqm) {
   Mips * mips = (Mips *) opaque;
 
-  uart_write(mips, address - UARTBASE, word);
+  uart_writeb(mips, address - UARTBASE, word);
   return 0;
 }
 
 // Initializes the bus component.
 int bus_init(struct bus_controller *bus,
-  uint8_t *mem, size_t mem_size, void *uart) {
+  uint8_t *mem, size_t mem_size, Mips *emu) {
   memset(bus, 0, sizeof(*bus));
   bus->mem_size = mem_size;
   bus->mem = mem;
+  bus->emu = emu;
 
-  uart_Reset(&bus->mips);
+  uart_Reset(bus->emu);
 
   create_memory_map(&bus->map);
   map_address_range(&bus->map, UARTBASE, UARTSIZE,
-    uart, read_uart, write_uart);
+    emu, read_uart, write_uart);
 
   return 0;
 }
@@ -63,6 +64,7 @@ int bus_read_word(void *component, uint32_t address, uint32_t *word) {
   else if ((node = resolve_mapped_address(&bus->map, address)) == NULL) {
     debug("bus_read_word: Failed to access: 0x%.8X\n", address);
 
+    abort();
     *word = 0x00000000U;
     return 0;
   }
@@ -93,6 +95,7 @@ int bus_write_word(void *component,
   else if ((node = resolve_mapped_address(&bus->map, address)) == NULL) {
     debug("bus_write_word: Failed to access: 0x%.8X\n", address);
 
+    abort();
     return 0;
   }
 
